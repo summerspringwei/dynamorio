@@ -232,6 +232,7 @@ configure_DynamoRIO_global(OFF ON)
 # sanity checks.                                                  # NON-PUBLIC
 add_sample_client(bbbuf       "bbbuf.c"         "drmgr;drreg;drx")
 add_sample_client(bbcount     "bbcount.c"       "drmgr;drreg;drx")
+add_sample_client(bbtiming     "bbtiming.c"       "drmgr;drreg;drx")
 add_sample_client(bbsize      "bbsize.c"        "drmgr;drx")
 if (LINUX)
   CHECK_INCLUDE_FILE("libunwind.h" HAVE_LIBUNWIND_H)

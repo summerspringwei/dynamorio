@@ -45,6 +45,9 @@
 #include "drreg.h"
 #include "drx.h"
 
+#define VERBOSE 1
+#define VERBOSE_VERBOSE 1
+
 #ifdef WINDOWS
 #    define DISPLAY_STRING(msg) dr_messagebox(msg)
 #else
