@@ -90,7 +90,17 @@ insert_after_last(void *drcontext, instrlist_t *bb, instr_t *where, void* addr){
     // instrlist_meta_postinsert(bb, where, );
     instrlist_insert_mov_immed_ptrsz(drcontext, (ptr_int_t)addr,
                                      opnd_create_reg(reg1), bb, where, NULL, NULL);
-    // reg2 = [reg1+0]
+    // // reg2 = [reg1+0]
+    // instrlist_meta_postinsert(
+    //     bb, where,
+    //     XINST_CREATE_load(drcontext, opnd_create_reg(reg2), OPND_CREATE_MEMPTR(reg1, 0)));
+    // // reg2 = reg2 + 1
+    // instrlist_meta_postinsert(bb, where,
+    //         XINST_CREATE_add_s(drcontext, opnd_create_reg(reg2), OPND_CREATE_INT(1)));
+    // // [reg1+0] = reg2
+    // instrlist_meta_postinsert(bb, where,
+    //         XINST_CREATE_store(drcontext, OPND_CREATE_MEMPTR(reg1, 0),
+    //                            opnd_create_reg(reg2)));
     instrlist_meta_preinsert(
         bb, where,
         XINST_CREATE_load(drcontext, opnd_create_reg(reg2), OPND_CREATE_MEMPTR(reg1, 0)));
@@ -118,7 +128,8 @@ event_app_instruction(void *drcontext, void* tag, instrlist_t *bb, instr_t *inst
                      bool for_trace, bool translating, void *user_data){
     drmgr_disable_auto_predication(drcontext, bb);
     // If not first and not last instruction, return normal emit
-    
+    if (!instr_is_app(inst))
+        return DR_EMIT_DEFAULT;
     // If first instruction
     if(drmgr_is_first_instr(drcontext, inst)){
         // Insert code to print before
@@ -127,9 +138,8 @@ event_app_instruction(void *drcontext, void* tag, instrlist_t *bb, instr_t *inst
         instr_disassemble(drcontext, inst, STDOUT);
         printf("\n");
     }
-    
     // If last instruction
-    if(drmgr_is_last_instr(drcontext, inst)){
+    else if(drmgr_is_last_instr(drcontext, inst)){
         // Insert code to print after
         // dr_insert_clean_call(drcontext, bb, inst, (void *)print_after, false, 0);
         insert_after_last(drcontext, bb, inst, (void*)&exit_count);
@@ -143,7 +153,7 @@ event_app_instruction(void *drcontext, void* tag, instrlist_t *bb, instr_t *inst
 
 DR_EXPORT void
 dr_client_main(client_id_t id, int argc, const char* argv[]){
-    drreg_options_t ops = { sizeof(ops), 1 /*max slots needed: aflags*/, false };
+    drreg_options_t ops = { sizeof(ops), 3 /*max slots needed: aflags*/, false };
     dr_set_client_name("DynamoRIO Sample Client 'bbtiming'",
                        "http://dynamorio.org/issues");
     if (!drmgr_init() || !drx_init() || drreg_init(&ops) != DRREG_SUCCESS)
