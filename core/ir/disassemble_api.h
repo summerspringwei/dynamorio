@@ -258,4 +258,11 @@ DR_API
 void
 instrlist_disassemble(void *drcontext, app_pc tag, instrlist_t *ilist, file_t outfile);
 
+DR_API
+/**
+ * Save as before except we print the instruction's pc.
+*/
+void
+instrlist_disassemble_with_pc(void *drcontext, app_pc tag, instrlist_t *ilist, file_t outfile);
+
 #endif /* _DR_IR_DISASSEMBLE_H_ */

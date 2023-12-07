@@ -1673,6 +1673,108 @@ instrlist_disassemble(void *drcontext, app_pc tag, instrlist_t *ilist, file_t ou
     print_file(outfile, "END " PFX "\n\n", tag);
 }
 
+
+void
+instrlist_disassemble_with_pc(void *drcontext, app_pc tag, instrlist_t *ilist, file_t outfile)
+{
+    dcontext_t *dcontext = (dcontext_t *)drcontext;
+    int len, sz;
+    instr_t *instr;
+    byte *addr;
+    byte *next_addr;
+    byte bytes[64]; /* scratch array for encoding instrs */
+    int level;
+    int offs = 0;
+    /* we want to print out the decode level each instr is at, so we have to
+     * do a little work
+     */
+
+    print_file(outfile, "TAG  " PFX "\n", tag);
+
+    for (instr = instrlist_first(ilist); instr; instr = instr_get_next(instr)) {
+        DOLOG(5, LOG_ALL, {
+            if (instr_raw_bits_valid(instr)) {
+                print_file(outfile, " <raw " PFX "-" PFX ">::\n",
+                           instr_get_raw_bits(instr),
+                           instr_get_raw_bits(instr) + instr_length(dcontext, instr));
+            }
+            if (instr_get_translation(instr) != NULL) {
+                print_file(outfile, " <translation " PFX ">::\n",
+                           instr_get_translation(instr));
+            }
+        });
+        if (instr_needs_encoding(instr)) {
+            byte *nxt_pc;
+            level = 4;
+            /* encode instr and then output as BINARY */
+            nxt_pc = instr_encode_ignore_reachability(dcontext, instr, bytes);
+            CLIENT_ASSERT(nxt_pc != NULL, "failed to encode instr");
+            len = (int)(nxt_pc - bytes);
+            addr = bytes;
+            CLIENT_ASSERT(len < sizeof(bytes), "instrlist_disassemble: too-long instr");
+        } else {
+            addr = instr_get_raw_bits(instr);
+            len = instr_length(dcontext, instr);
+            if (instr_operands_valid(instr))
+                level = 3;
+            else if (instr_opcode_valid(instr))
+                level = 2;
+            else if (decode_sizeof(dcontext, addr, NULL _IF_X86_64(NULL)) == len)
+                level = 1;
+            else
+                level = 0;
+        }
+
+        /* Print out individual instructions.  Remember that multiple
+         * instructions may be packed into a single instr.
+         */
+        if (level > 3 ||
+            /* Print as an instr for L3 to get IT predicates */
+            (level == 3 && !instr_is_cti_short_rewrite(instr, addr))) {
+
+            /* for L4 we want to see instr targets and don't care
+             * as much about raw bytes
+             */
+            int extra_sz;
+            print_file(outfile, " +%-4d %c%d @" PFX " %lx", offs,
+                       instr_is_app(instr) ? 'L' : 'm', level, instr, (ptr_uint_t)instr_get_app_pc(instr));
+            extra_sz = print_bytes_to_file(outfile, addr, addr + len, instr);
+            instr_disassemble(dcontext, instr, outfile);
+            print_file(outfile, "\n");
+            if (extra_sz > 0) {
+                print_file(outfile, IF_X64_ELSE("%30s", "%22s"), " ");
+                print_extra_bytes_to_file(outfile, addr, addr + len, extra_sz, "");
+            }
+            offs += len;
+            len = 0; /* skip loop */
+        }
+        while (len) {
+            print_file(outfile, " +%-4d %c%d " IF_X64_ELSE("%20s", "%12s"), offs,
+                       instr_is_app(instr) ? 'L' : 'm', level, " ");
+            /* Leave level 0 alone as it may not be code. */
+            if (level == 0) {
+                print_file(outfile, " <...%d bytes...>\n", instr->length);
+                next_addr = addr + instr->length;
+            } else {
+                next_addr = internal_disassemble_to_file(
+                    dcontext, addr, addr, outfile, false, true,
+                    IF_X64_ELSE("                               ",
+                                "                       "));
+                if (next_addr == NULL)
+                    break;
+            }
+            sz = (int)(next_addr - addr);
+            CLIENT_ASSERT(sz <= len, "instrlist_disassemble: invalid length");
+            len -= sz;
+            addr += sz;
+            offs += sz;
+        }
+        DOLOG(5, LOG_ALL, { print_file(outfile, "---- multi-instr boundary ----\n"); });
+    }
+
+    print_file(outfile, "END " PFX "\n\n", tag);
+}
+
 /***************************************************************************/
 #ifndef STANDALONE_DECODER
 

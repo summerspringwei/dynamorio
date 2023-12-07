@@ -4,7 +4,8 @@
 #include "drmgr.h"
 #include "drreg.h"
 #include "utils.h"
-
+// #include "dr_ir_opcodes_arm.h"
+#include "mutils.h"
 
 static client_id_t client_id;
 static reg_id_t tls_seg;
@@ -33,7 +34,8 @@ enum {
 
 typedef struct {
     app_pc pc;
-    int opcode;
+    // int opcode;
+    uint64 cycles;
 } ins_ref_t;
 
 typedef struct {
@@ -44,6 +46,19 @@ typedef struct {
     uint64 num_refs;
 }per_thread_t;
 
+// static void instrace(void* drcontext){
+//     per_thread_t *data;
+//     ins_ref_t *ins_ref, *buf_ptr;
+
+//     data = drmgr_get_tls_field(drcontext, tls_idx);
+//     buf_ptr = BUF_PTR(data->seg_base);
+//     for(ins_ref=(ins_ref_t *)data->buf_base; ins_ref < buf_ptr; ins_ref++){
+//         fprintf(data->logf, PIFX ",%s\n", (ptr_uint_t)ins_ref->pc, decode_opcode_name(ins_ref->opcode));
+//         data->num_refs++;
+//     }
+//     BUF_PTR(data->seg_base) = data->buf_base;
+// }
+
 static void instrace(void* drcontext){
     per_thread_t *data;
     ins_ref_t *ins_ref, *buf_ptr;
@@ -51,7 +66,7 @@ static void instrace(void* drcontext){
     data = drmgr_get_tls_field(drcontext, tls_idx);
     buf_ptr = BUF_PTR(data->seg_base);
     for(ins_ref=(ins_ref_t *)data->buf_base; ins_ref < buf_ptr; ins_ref++){
-        fprintf(data->logf, PIFX ",%s\n", (ptr_uint_t)ins_ref->pc, decode_opcode_name(ins_ref->opcode));
+        fprintf(data->logf, PIFX ",%lu\n", (ptr_uint_t)ins_ref->pc, (ptr_uint_t)ins_ref->cycles);
         data->num_refs++;
     }
     BUF_PTR(data->seg_base) = data->buf_base;
@@ -65,6 +80,7 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst
 static void
 event_thread_init(void *drcontext)
 {
+    printf("clock cycle frequency: %lu\n", get_arm_clock_freq());
     per_thread_t *data = dr_thread_alloc(drcontext, sizeof(per_thread_t));
     DR_ASSERT(data != NULL);
     drmgr_set_tls_field(drcontext, tls_idx, data);
@@ -147,18 +163,18 @@ insert_save_pc(void *drcontext, instrlist_t *ilist, instr_t *where, reg_id_t bas
 }
 
 
-static void
-insert_save_opcode(void *drcontext, instrlist_t *ilist, instr_t *where, reg_id_t base,
-    reg_id_t scratch, int opcode){
-    // Change register to 2 bytes
-    scratch = reg_resize_to_opsz(scratch, OPSZ_2);
-    MINSERT(ilist, where,
-            XINST_CREATE_load_int(drcontext, opnd_create_reg(scratch), OPND_CREATE_INT16(opcode)));
-    MINSERT(ilist, where,
-            XINST_CREATE_store_2bytes(
-                drcontext, OPND_CREATE_MEM16(base, offsetof(ins_ref_t, opcode)),
-                opnd_create_reg(scratch)));
-}
+// static void
+// insert_save_opcode(void *drcontext, instrlist_t *ilist, instr_t *where, reg_id_t base,
+//     reg_id_t scratch, int opcode){
+//     // Change register to 2 bytes
+//     scratch = reg_resize_to_opsz(scratch, OPSZ_2);
+//     MINSERT(ilist, where,
+//             XINST_CREATE_load_int(drcontext, opnd_create_reg(scratch), OPND_CREATE_INT16(opcode)));
+//     MINSERT(ilist, where,
+//             XINST_CREATE_store_2bytes(
+//                 drcontext, OPND_CREATE_MEM16(base, offsetof(ins_ref_t, opcode)),
+//                 opnd_create_reg(scratch)));
+// }
 
 static void
 insert_update_buf_ptr(void *drcontext, instrlist_t *ilist, instr_t *where, reg_id_t reg_ptr, int adjust){
@@ -166,6 +182,27 @@ insert_update_buf_ptr(void *drcontext, instrlist_t *ilist, instr_t *where, reg_i
     MINSERT(ilist, where,
             XINST_CREATE_add(drcontext, opnd_create_reg(reg_ptr), OPND_CREATE_INT16(adjust)));
     dr_insert_write_raw_tls(drcontext, ilist, where, tls_seg, tls_offs + INSTRACE_TLS_OFFS_BUF_PTR, reg_ptr);
+}
+
+
+// Insert "isb"
+// static void
+// insert_instruction_sync_barrier(void *drcontext, instrlist_t *ilist, instr_t *where){
+//     MINSERT(ilist, where, instr_create_0dst_0src(drcontext, OP_isb));
+// }
+
+// Insert "mov scratch cntvct_el0"
+static void
+insert_save_cycles(void *drcontext, instrlist_t *ilist, instr_t *where, reg_id_t base,
+    reg_id_t scratch){
+    scratch = reg_resize_to_opsz(scratch, OPSZ_8);
+    MINSERT(ilist, where, 
+            INSTR_CREATE_mrs(drcontext, opnd_create_reg(scratch),
+                                               opnd_create_reg(DR_REG_CNTVCT_EL0)));
+    MINSERT(ilist, where,
+            XINST_CREATE_store(
+                drcontext, OPND_CREATE_MEM64(base, offsetof(ins_ref_t, cycles)),
+                opnd_create_reg(scratch)));
 }
 
 static void
@@ -181,7 +218,9 @@ instrument_instr(void *drcontext, instrlist_t *ilist, instr_t *where){
 
     insert_load_buf_ptr(drcontext, ilist, where, reg_ptr);
     insert_save_pc(drcontext, ilist, where, reg_ptr, reg_tmp, instr_get_app_pc(where));
-    insert_save_opcode(drcontext, ilist, where, reg_ptr, reg_tmp, instr_get_opcode(where));
+    // insert_save_opcode(drcontext, ilist, where, reg_ptr, reg_tmp, instr_get_opcode(where));
+    // insert_instruction_sync_barrier(drcontext, ilist, where);
+    insert_save_cycles(drcontext, ilist, where, reg_ptr, reg_tmp);
     insert_update_buf_ptr(drcontext, ilist, where, reg_ptr, sizeof(ins_ref_t));
     /* Restore scratch registers */
     if (drreg_unreserve_register(drcontext, ilist, where, reg_ptr) != DRREG_SUCCESS ||
@@ -189,7 +228,7 @@ instrument_instr(void *drcontext, instrlist_t *ilist, instr_t *where){
         DR_ASSERT(false);
 }
 
-// /* clean_call dumps the memory reference info to the log file */
+/* clean_call dumps the memory reference info to the log file */
 // static void
 // clean_call(void)
 // {

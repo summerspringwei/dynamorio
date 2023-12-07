@@ -45,8 +45,8 @@
 #include "drreg.h"
 #include "drx.h"
 
-// #define VERBOSE 1
-// #define VERBOSE_VERBOSE 1
+#define VERBOSE 1
+#define VERBOSE_VERBOSE 1
 
 #ifdef WINDOWS
 #    define DISPLAY_STRING(msg) dr_messagebox(msg)
@@ -93,10 +93,6 @@ static dr_emit_flags_t
 event_app_instruction(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst,
                       bool for_trace, bool translating, void *user_data)
 {
-#ifdef SHOW_RESULTS
-    bool aflags_dead;
-#endif
-
     /* By default drmgr enables auto-predication, which predicates all instructions with
      * the predicate of the current instruction on ARM.
      * We disable it here because we want to unconditionally execute the following
@@ -106,33 +102,18 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst
     if (!drmgr_is_first_instr(drcontext, inst))
         return DR_EMIT_DEFAULT;
 
+    for (instr_t *instr = instrlist_first(bb); instr; instr = instr_get_next(instr)) {
+        printf("%lx\n", (ptr_uint_t)instr_get_app_pc(instr));
+    }
+    
 #ifdef VERBOSE
     dr_printf("in dynamorio_basic_block(tag=" PFX ")\n", tag);
 #    ifdef VERBOSE_VERBOSE
-    instrlist_disassemble(drcontext, tag, bb, STDOUT);
+    // instrlist_disassemble(drcontext, tag, bb, STDOUT);
+    instrlist_disassemble_with_pc(drcontext, tag, bb, STDOUT);
 #    endif
 #endif
 
-#ifdef SHOW_RESULTS
-    if (drreg_are_aflags_dead(drcontext, inst, &aflags_dead) == DRREG_SUCCESS &&
-        !aflags_dead)
-        bbs_eflags_saved++;
-    else
-        bbs_no_eflags_saved++;
-#endif
-
-    /* racy update on the counter for better performance */
-    drx_insert_counter_update(drcontext, bb, inst,
-                              /* We're using drmgr, so these slots
-                               * here won't be used: drreg's slots will be.
-                               */
-                              SPILL_SLOT_MAX + 1,
-                              IF_AARCHXX_(SPILL_SLOT_MAX + 1) & global_count, 1, 0);
-
-#if defined(VERBOSE) && defined(VERBOSE_VERBOSE)
-    dr_printf("Finished instrumenting dynamorio_basic_block(tag=" PFX ")\n", tag);
-    instrlist_disassemble(drcontext, tag, bb, STDOUT);
-#endif
     return DR_EMIT_DEFAULT;
 }
 

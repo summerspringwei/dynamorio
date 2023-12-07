@@ -50,7 +50,7 @@ _start:
 
 line:
     mov w3, '*'         // w3 = *
-    strb w3, [x0, #0]   // *X0 = w3
+    // strb w3, [x0, #0]   // *X0 = w3
     add x0, x0, #1      // x0 += 1
     add w2, w2, #1      // w2 += 1
     cmp w1, w2          // if w1==w2
